@@ -1,6 +1,7 @@
 package dev.dbos.transact;
 
 import dev.dbos.transact.database.Result;
+import dev.dbos.transact.database.StreamIterator;
 import dev.dbos.transact.database.SystemDatabase;
 import dev.dbos.transact.execution.DBOSExecutor;
 import dev.dbos.transact.json.DBOSSerializer;
@@ -20,6 +21,7 @@ import dev.dbos.transact.workflow.WorkflowStatus;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -640,6 +642,19 @@ public class DBOSClient implements AutoCloseable {
   public @NonNull Optional<Object> getEvent(
       @NonNull String targetId, @NonNull String key, @NonNull Duration timeout) {
     return Optional.ofNullable(systemDatabase.getEvent(targetId, key, timeout, null));
+  }
+
+  /**
+   * Read values from a stream as an iterator. This function reads values from a stream identified
+   * by the workflow_id and key, returning an iterator that yields each value in order until the
+   * stream is closed or the workflow terminates.
+   *
+   * @param workflowId The workflow instance ID that owns the stream
+   * @param key The stream key / name within the workflow
+   * @return Iterator that yields each value in the stream
+   */
+  public @NonNull Iterator<Object> readStream(@NonNull String workflowId, @NonNull String key) {
+    return new StreamIterator(workflowId, key, systemDatabase);
   }
 
   /**
