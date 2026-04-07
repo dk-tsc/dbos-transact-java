@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.dbos.transact.Constants;
 import dev.dbos.transact.config.DBOSConfig;
 import dev.dbos.transact.exceptions.DBOSMaxRecoveryAttemptsExceededException;
 import dev.dbos.transact.exceptions.DBOSQueueDuplicatedException;
@@ -17,6 +18,7 @@ import dev.dbos.transact.utils.DBUtils;
 import dev.dbos.transact.utils.PgContainer;
 import dev.dbos.transact.utils.WorkflowStatusBuilder;
 import dev.dbos.transact.workflow.ExportedWorkflow;
+import dev.dbos.transact.workflow.ForkOptions;
 import dev.dbos.transact.workflow.ScheduleStatus;
 import dev.dbos.transact.workflow.StepInfo;
 import dev.dbos.transact.workflow.VersionInfo;
@@ -189,8 +191,7 @@ public class SystemDatabaseTest {
         WorkflowState.ERROR.name(), DBUtils.getWorkflowRow(dataSource, "wf-error").status());
   }
 
-  @Test
-  public void testResumeWorkflows() throws Exception {
+  List<String> insertResumableWorkflows() throws Exception {
     // Create workflows in different states
     for (var wfid : List.of("wf-cancelled-1", "wf-cancelled-2")) {
       sysdb.initWorkflowStatus(
@@ -207,13 +208,44 @@ public class SystemDatabaseTest {
     DBUtils.setWorkflowState(dataSource, "wf-success", WorkflowState.SUCCESS.name());
     DBUtils.setWorkflowState(dataSource, "wf-error", WorkflowState.ERROR.name());
 
+    return List.of("wf-cancelled-1", "wf-cancelled-2", "wf-success", "wf-error");
+  }
+
+  @Test
+  public void testResumeWorkflows() throws Exception {
+
+    var workflowIds = insertResumableWorkflows();
+
     // Resume all four IDs in one call
-    sysdb.resumeWorkflows(List.of("wf-cancelled-1", "wf-cancelled-2", "wf-success", "wf-error"));
+    sysdb.resumeWorkflows(workflowIds, null);
 
     // CANCELLED ones become ENQUEUED
     for (var wfid : List.of("wf-cancelled-1", "wf-cancelled-2")) {
       var row = DBUtils.getWorkflowRow(dataSource, wfid);
       assertEquals(WorkflowState.ENQUEUED.name(), row.status());
+      assertEquals(Constants.DBOS_INTERNAL_QUEUE, row.queueName());
+    }
+
+    // SUCCESS and ERROR are left untouched
+    assertEquals(
+        WorkflowState.SUCCESS.name(), DBUtils.getWorkflowRow(dataSource, "wf-success").status());
+    assertEquals(
+        WorkflowState.ERROR.name(), DBUtils.getWorkflowRow(dataSource, "wf-error").status());
+  }
+
+  @Test
+  public void testResumeWorkflowsCustomQueue() throws Exception {
+
+    var workflowIds = insertResumableWorkflows();
+
+    // Resume all four IDs in one call
+    sysdb.resumeWorkflows(workflowIds, "customQueue");
+
+    // CANCELLED ones become ENQUEUED
+    for (var wfid : List.of("wf-cancelled-1", "wf-cancelled-2")) {
+      var row = DBUtils.getWorkflowRow(dataSource, wfid);
+      assertEquals(WorkflowState.ENQUEUED.name(), row.status());
+      assertEquals("customQueue", row.queueName());
     }
 
     // SUCCESS and ERROR are left untouched
@@ -240,7 +272,7 @@ public class SystemDatabaseTest {
         WorkflowStatusInternal.builder("wf-id", WorkflowState.PENDING).build(), 5, false, false);
     DBUtils.setWorkflowState(dataSource, "wf-id", WorkflowState.CANCELLED.name());
 
-    sysdb.resumeWorkflows(Arrays.asList("wf-id", null));
+    sysdb.resumeWorkflows(Arrays.asList("wf-id", null), null);
 
     assertEquals(
         WorkflowState.ENQUEUED.name(), DBUtils.getWorkflowRow(dataSource, "wf-id").status());
@@ -902,7 +934,7 @@ public class SystemDatabaseTest {
     assertArrayEquals(authenticatedRoles, originalRetrieved.authenticatedRoles());
 
     // Fork the workflow
-    var forkOptions = new dev.dbos.transact.workflow.ForkOptions(null, "1.0.0", null);
+    var forkOptions = new ForkOptions().withApplicationVersion("1.0.0");
     var forkedWorkflowId = sysdb.forkWorkflow(originalWorkflowId, 0, forkOptions);
     assertNotNull(forkedWorkflowId);
     assertNotEquals(originalWorkflowId, forkedWorkflowId);
@@ -957,7 +989,7 @@ public class SystemDatabaseTest {
     sysdb.initWorkflowStatus(originalStatus, null, false, false);
 
     // Fork the workflow
-    var forkOptions = new dev.dbos.transact.workflow.ForkOptions(null, "1.0.0", null);
+    var forkOptions = new ForkOptions().withApplicationVersion("1.0.0");
     var forkedWorkflowId = sysdb.forkWorkflow(originalWorkflowId, 0, forkOptions);
     assertNotNull(forkedWorkflowId);
 
@@ -1012,7 +1044,7 @@ public class SystemDatabaseTest {
     assertEquals(0, originalRetrieved.authenticatedRoles().length);
 
     // Fork the workflow
-    var forkOptions = new dev.dbos.transact.workflow.ForkOptions(null, "1.0.0", null);
+    var forkOptions = new ForkOptions().withApplicationVersion("1.0.0");
     var forkedWorkflowId = sysdb.forkWorkflow(originalWorkflowId, 0, forkOptions);
     assertNotNull(forkedWorkflowId);
     assertNotEquals(originalWorkflowId, forkedWorkflowId);
