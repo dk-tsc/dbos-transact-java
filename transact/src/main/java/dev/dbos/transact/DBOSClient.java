@@ -829,10 +829,10 @@ public class DBOSClient implements AutoCloseable {
   /**
    * List workflows matching the supplied input filter criteria
    *
-   * @param input Filter criteria to use for listing workflows
+   * @param input Filter criteria to use for listing workflows. Pass null to list all workflows.
    * @return list of workflows matching the `ListWorkflowsInput` criteria
    */
-  public @NonNull List<WorkflowStatus> listWorkflows(@NonNull ListWorkflowsInput input) {
+  public @NonNull List<WorkflowStatus> listWorkflows(@Nullable ListWorkflowsInput input) {
     return systemDatabase.listWorkflows(input);
   }
 
@@ -843,7 +843,20 @@ public class DBOSClient implements AutoCloseable {
    * @return List of steps executed by the workflow
    */
   public @NonNull List<StepInfo> listWorkflowSteps(@NonNull String workflowId) {
-    return systemDatabase.listWorkflowSteps(workflowId);
+    return listWorkflowSteps(workflowId, null, null);
+  }
+
+  /**
+   * List the steps executed by a workflow with optional pagination
+   *
+   * @param workflowId ID of the workflow to list
+   * @param limit Maximum number of steps to return
+   * @param offset Number of steps to skip before returning
+   * @return List of steps executed by the workflow
+   */
+  public @NonNull List<StepInfo> listWorkflowSteps(
+      @NonNull String workflowId, Integer limit, Integer offset) {
+    return systemDatabase.listWorkflowSteps(workflowId, true, limit, offset);
   }
 
   /**
