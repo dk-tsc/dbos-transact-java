@@ -16,6 +16,7 @@ import dev.dbos.transact.workflow.ScheduleStatus;
 import dev.dbos.transact.workflow.StepInfo;
 import dev.dbos.transact.workflow.VersionInfo;
 import dev.dbos.transact.workflow.WorkflowAggregateRow;
+import dev.dbos.transact.workflow.WorkflowDelay;
 import dev.dbos.transact.workflow.WorkflowEvent;
 import dev.dbos.transact.workflow.WorkflowEventHistory;
 import dev.dbos.transact.workflow.WorkflowSchedule;
@@ -226,6 +227,14 @@ public class SystemDatabase implements AutoCloseable {
         }
       }
     }
+  }
+
+  static Instant toInstant(Long epochMs) {
+    return epochMs != null ? Instant.ofEpochMilli(epochMs) : null;
+  }
+
+  static Duration toDuration(Long ms) {
+    return ms != null ? Duration.ofMillis(ms) : null;
   }
 
   /**
@@ -513,6 +522,14 @@ public class SystemDatabase implements AutoCloseable {
     dbRetry(() -> workflowDAO.garbageCollect(cutoff, rowsThreshold));
   }
 
+  public void setWorkflowDelay(String workflowId, WorkflowDelay delay) {
+    dbRetry(() -> workflowDAO.setWorkflowDelay(workflowId, delay));
+  }
+
+  public void transitionDelayedWorkflows() {
+    dbRetry(() -> workflowDAO.transitionDelayedWorkflows());
+  }
+
   public void createSchedule(WorkflowSchedule schedule) {
     dbRetry(() -> schedulesDAO.createSchedule(schedule));
   }
@@ -782,7 +799,9 @@ public class SystemDatabase implements AutoCloseable {
                         rs.getString("message"), serialization, this.serializer);
                 var createdAtEpochMs = rs.getLong("created_at_epoch_ms");
                 var consumed = rs.getBoolean("consumed");
-                notifications.add(new NotificationInfo(topic, message, createdAtEpochMs, consumed));
+                notifications.add(
+                    new NotificationInfo(
+                        topic, message, SystemDatabase.toInstant(createdAtEpochMs), consumed));
               }
             }
           }
@@ -904,9 +923,10 @@ public class SystemDatabase implements AutoCloseable {
           created_at, updated_at, started_at_epoch_ms,
           queue_name, deduplication_id, priority, queue_partition_key,
           workflow_timeout_ms, workflow_deadline_epoch_ms,
-          recovery_attempts, forked_from, parent_workflow_id, serialization
+          recovery_attempts, forked_from, parent_workflow_id, serialization,
+          delay_until_epoch_ms
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
         """
             .formatted(this.schema);
@@ -1004,19 +1024,20 @@ public class SystemDatabase implements AutoCloseable {
                 wfStmt.setString(12, status.executorId());
                 wfStmt.setString(13, status.appVersion());
                 wfStmt.setString(14, status.appId());
-                wfStmt.setObject(15, status.createdAtMs());
-                wfStmt.setObject(16, status.updatedAtMs());
-                wfStmt.setObject(17, status.startedAtMs());
+                wfStmt.setObject(15, status.createdAtEpochMs());
+                wfStmt.setObject(16, status.updatedAtEpochMs());
+                wfStmt.setObject(17, status.startedAtEpochMs());
                 wfStmt.setString(18, status.queueName());
                 wfStmt.setString(19, status.deduplicationId());
                 wfStmt.setObject(20, status.priority());
                 wfStmt.setString(21, status.queuePartitionKey());
                 wfStmt.setObject(22, status.timeoutMs());
-                wfStmt.setObject(23, status.deadlineMs());
+                wfStmt.setObject(23, status.deadlineEpochMs());
                 wfStmt.setObject(24, status.recoveryAttempts());
                 wfStmt.setString(25, status.forkedFrom());
                 wfStmt.setString(26, status.parentWorkflowId());
                 wfStmt.setString(27, status.serialization());
+                wfStmt.setObject(28, status.delayUntilEpochMs());
                 wfStmt.addBatch();
 
                 for (var step : workflow.steps()) {

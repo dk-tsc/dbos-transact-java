@@ -2,6 +2,7 @@ package dev.dbos.transact.queue;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -135,6 +136,42 @@ public class QueuesTest {
       assertEquals("firstQueue", row.queueName());
       assertNull(row.deduplicationId());
     }
+  }
+
+  @Test
+  public void testDedupeIdWithDelay() throws Exception {
+
+    Queue firstQ = new Queue("firstQueue");
+    dbos.registerQueue(firstQ);
+
+    ServiceQ serviceQ = dbos.registerProxy(ServiceQ.class, new ServiceQImpl());
+    dbos.launch();
+
+    var qs = DBOSTestAccess.getQueueService(dbos);
+    qs.pause();
+
+    var dedupeId = "dedupeId";
+    var options = new StartWorkflowOptions().withQueue(firstQ).withDeduplicationId(dedupeId);
+    var h1 =
+        dbos.startWorkflow(
+            () -> serviceQ.simpleQWorkflow("abc"), options.withDelay(Duration.ofHours(1)));
+    var s1 = h1.getStatus();
+    assertEquals(WorkflowState.DELAYED, s1.status());
+    assertEquals(dedupeId, s1.deduplicationId());
+
+    // Same dedupe ID should conflict even while DELAYED
+    assertThrows(
+        RuntimeException.class,
+        () -> dbos.startWorkflow(() -> serviceQ.simpleQWorkflow("def"), options));
+
+    // Clear the delay and run
+    dbos.setWorkflowDelay(h1.workflowId(), Instant.now().minusSeconds(1));
+    qs.unpause();
+    h1.getResult();
+
+    // After completion the dedupe ID is released — re-enqueue should succeed
+    var h2 = dbos.startWorkflow(() -> serviceQ.simpleQWorkflow("ghi"), options);
+    h2.getResult();
   }
 
   @Test
@@ -413,12 +450,7 @@ public class QueuesTest {
 
     for (int i = 0; i < 4; i++) {
       String wfid = "id" + i;
-      var status =
-          builder
-              .workflowId(wfid)
-              .status(WorkflowState.ENQUEUED)
-              .deduplicationId("dedup" + i)
-              .build();
+      var status = builder.workflowId(wfid).deduplicationId("dedup" + i).build();
       systemDatabase.initWorkflowStatus(status, null, false, false);
     }
 
@@ -493,28 +525,19 @@ public class QueuesTest {
     // executor1
     for (int i = 0; i < 2; i++) {
       String wfid = "id" + i;
-      var status =
-          builder
-              .workflowId(wfid)
-              .status(WorkflowState.ENQUEUED)
-              .deduplicationId("dedup" + i)
-              .build();
+      var status = builder.workflowId(wfid).deduplicationId("dedup" + i).build();
       systemDatabase.initWorkflowStatus(status, null, false, false);
     }
 
     // executor2
     String executor2 = "remote";
     for (int i = 2; i < 5; i++) {
-
       String wfid = "id" + i;
       var status =
-          builder
-              .workflowId(wfid)
-              .status(WorkflowState.PENDING)
-              .deduplicationId("dedup" + i)
-              .executorId(executor2)
-              .build();
+          builder.workflowId(wfid).deduplicationId("dedup" + i).executorId(executor2).build();
       systemDatabase.initWorkflowStatus(status, null, false, false);
+
+      DBUtils.setWorkflowState(dataSource, wfid, WorkflowState.PENDING.name());
     }
 
     List<String> idsToRun =
@@ -532,6 +555,31 @@ public class QueuesTest {
             appVersion,
             null);
     assertEquals(2, idsToRun.size());
+  }
+
+  @Test
+  public void testQueueOptionsNotWrittenWhenNotEnqueued() throws Exception {
+    var impl = new PartitionsTestServiceImpl();
+    var proxy = dbos.registerProxy(PartitionsTestService.class, impl);
+    dbos.launch();
+
+    var options =
+        new StartWorkflowOptions()
+            .withDeduplicationId("dedupe")
+            .withDelay(Duration.ofSeconds(10))
+            .withPriority(100)
+            .withQueuePartitionKey("partition-1");
+    var handle = dbos.startWorkflow(() -> proxy.normalWorkflow(), options);
+    var result = handle.getResult();
+    assertEquals(handle.workflowId(), result);
+
+    var row = DBUtils.getWorkflowRow(dataSource, handle.workflowId());
+    assertNotNull(row);
+    assertNull(row.queueName());
+    assertNull(row.deduplicationId());
+    assertNull(row.queuePartitionKey());
+    assertEquals(0, row.priority());
+    assertNull(row.delayUntilEpochMs());
   }
 
   @Test

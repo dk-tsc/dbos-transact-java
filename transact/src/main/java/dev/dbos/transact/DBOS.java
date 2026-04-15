@@ -23,6 +23,7 @@ import dev.dbos.transact.workflow.StepInfo;
 import dev.dbos.transact.workflow.StepOptions;
 import dev.dbos.transact.workflow.VersionInfo;
 import dev.dbos.transact.workflow.Workflow;
+import dev.dbos.transact.workflow.WorkflowDelay;
 import dev.dbos.transact.workflow.WorkflowHandle;
 import dev.dbos.transact.workflow.WorkflowSchedule;
 import dev.dbos.transact.workflow.WorkflowStatus;
@@ -924,6 +925,38 @@ public class DBOS implements AutoCloseable {
   public <T, E extends Exception> @NonNull WorkflowHandle<T, E> retrieveWorkflow(
       @NonNull String workflowId) {
     return ensureLaunched("retrieveWorkflow").retrieveWorkflow(workflowId);
+  }
+
+  /**
+   * Sets a delay for a workflow, causing it to be paused for a specified duration or until a
+   * specific time. This is useful for implementing delays, timeouts, or scheduling workflows to
+   * resume at a later time.
+   *
+   * @param workflowId the unique identifier of the workflow to delay
+   * @param delay the duration to delay the workflow from now
+   * @throws IllegalArgumentException if the workflow ID is invalid
+   * @throws IllegalStateException if DBOS has not been launched
+   */
+  public void setWorkflowDelay(@NonNull String workflowId, @NonNull Duration delay) {
+    var wfDelay = new WorkflowDelay.Delay(Objects.requireNonNull(delay, "delay must not be null"));
+    ensureLaunched("setWorkflowDelay").setWorkflowDelay(workflowId, wfDelay);
+  }
+
+  /**
+   * Sets a delay for a workflow, causing it to be paused for a specified duration or until a
+   * specific time. This is useful for implementing delays, timeouts, or scheduling workflows to
+   * resume at a later time.
+   *
+   * @param workflowId the unique identifier of the workflow to delay
+   * @param delayUntil the absolute time until which to delay the workflow
+   * @throws IllegalArgumentException if the workflow ID is invalid
+   * @throws IllegalStateException if DBOS has not been launched
+   */
+  public void setWorkflowDelay(@NonNull String workflowId, @NonNull Instant delayUntil) {
+    var wfDelay =
+        new WorkflowDelay.DelayUntil(
+            Objects.requireNonNull(delayUntil, "delayUntil must not be null"));
+    ensureLaunched("setWorkflowDelay").setWorkflowDelay(workflowId, wfDelay);
   }
 
   /**
